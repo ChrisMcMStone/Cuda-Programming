@@ -21,7 +21,7 @@
 #include <helper_cuda.h>
 #include <helper_functions.h>
 #endif
-#define BLOCKSIZE 1024
+#define BLOCKSIZE 512
 // Only half number of threads are used in Scan when vector size = block size
 // Therefore we can double to size of the vector used in the block scan
 
@@ -92,12 +92,17 @@ __global__ void add_blocks(int *d_Sum1_Scanned, int *d_Y, int sumSize, int n) {
 
 }
 
-__global__ void average_scanned_block(int *d_Y, int n, int windowsize) {
+__global__ void average_scanned_block(int *d_Y, int *d_Z, int n, int windowLen) {
 
-//	__shared__ int read[BLOCKSIZE];
-//	int i = blockIdx.x * blockDim.x + threadIdx.x;
-//
-//	read[i] = d_Y[i - windowSize]
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i < n) {
+		int x = i - windowLen;
+		if(x >= 0) {
+			d_Z[i] = (d_Y[i] - d_Y[x]) / windowLen;
+		} else {
+			d_Z[i] = (d_Y[i] - d_Y[0]) / i;
+		}
+	}
 }
 
 void winAverage(const int *InputVector, int *Window, int size, int n) {
@@ -206,7 +211,7 @@ int main(void) {
 	sdkStartTimer(&timer);               // start the timer
 #endif
 	// Run winAverage on host for calculating speedup
-	host_scan(h_input, h_avg, inputVectorLen);
+	winAverage(h_input, h_avg, inputVectorLen, windowLen);
 
 #ifdef TIMING_SUPPORT
 	// stop and destroy timer
@@ -224,6 +229,7 @@ int main(void) {
 
 	int *d_X = NULL;
 	int *d_Y = NULL;
+	int *d_Z = NULL;
 	int *d_Sum1 = NULL;
 	int *d_Sum1_Scanned = NULL;
 	int *d_Sum2 = NULL;
@@ -234,6 +240,9 @@ int main(void) {
 
 	cudaMalloc((void **) &d_Y, inputVectorSize);
 	int *h_Y = (int *) malloc(inputVectorSize);
+	cudaCheckError();
+
+	cudaMalloc((void **) &d_Z, inputVectorSize);
 	cudaCheckError();
 
 	//Calculate size of extract sum vector
@@ -287,6 +296,8 @@ int main(void) {
 
 	//Add the scanned extract sum to the elements of the output vector
 	add_blocks<<<blocksPerGrid, threadsPerBlock>>>(d_Sum1_Scanned, d_Y, sumLen, inputVectorLen);
+
+	average_scanned_block<<<blocksPerGrid, threadsPerBlock>>>(d_Y, d_Z, inputVectorLen, windowLen);
     cudaDeviceSynchronize();
 	cudaCheckError();
 //	cudaMemcpy(h_Y, d_Y, inputVectorSize, cudaMemcpyDeviceToHost);
@@ -308,7 +319,7 @@ int main(void) {
 
 //	// Copy the device result vector in device memory to the host result vector
 //	// in host memory.
-	cudaMemcpy(h_avgVerify, d_Y, inputVectorSize, cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_avgVerify, d_Z, inputVectorSize, cudaMemcpyDeviceToHost);
 	cudaCheckError();
 
 	if (checkValid(h_avg, h_avgVerify, inputVectorLen) == 0) {
