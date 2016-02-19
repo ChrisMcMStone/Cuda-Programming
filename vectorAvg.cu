@@ -21,37 +21,37 @@
 #include <helper_cuda.h>
 #include <helper_functions.h>
 #endif
-#define BLOCKSIZE 512
+#define BLOCKSIZE 1024
 // Only half number of threads are used in Scan when vector size = block size
 // Therefore we can double to size of the vector used in the block scan
 
 __global__ void block_scan(const int *d_X, int *d_Y, int n, int *extractArray) {
 
-	__shared__ int sharedSum[BLOCKSIZE*2];
+	__shared__ int sharedSum[BLOCKSIZE * 2];
 	int i = threadIdx.x;
 	int blockOffset = blockIdx.x * BLOCKSIZE * 2;
 
 	// Each thread copies an element from global into shared memory
 	//Copy first block's worth of elements into shared mem
-	if(i + blockOffset < n) {
+	if (i + blockOffset < n) {
 		sharedSum[i] = d_X[blockOffset + i];
 	} else {
 		//Fill the remaining elements in the last non-full block with zero
-		sharedSum[i] =  0;
+		sharedSum[i] = 0;
 	}
 	//Copy first block's worth of elements into shared mem
-	if(blockOffset + BLOCKSIZE + i < n) {
+	if (blockOffset + BLOCKSIZE + i < n) {
 		sharedSum[i + BLOCKSIZE] = d_X[blockOffset + BLOCKSIZE + i];
 	} else {
 		sharedSum[i + BLOCKSIZE] = 0;
 	}
 
 	//Reduction phase
-	for (uint stride = 1; stride < BLOCKSIZE*2; stride *= 2) {
+	for (uint stride = 1; stride < BLOCKSIZE * 2; stride *= 2) {
 		//Minimize divergence
 		__syncthreads();
 		uint index = (threadIdx.x + 1) * stride * 2 - 1;
-		if (index < BLOCKSIZE*2)
+		if (index < BLOCKSIZE * 2)
 			sharedSum[index] += sharedSum[index - stride];
 	}
 
@@ -59,17 +59,17 @@ __global__ void block_scan(const int *d_X, int *d_Y, int n, int *extractArray) {
 	for (uint stride = BLOCKSIZE / 2; stride > 0; stride /= 2) {
 		__syncthreads();
 		uint index = (threadIdx.x + 1) * stride * 2 - 1;
-		if (index + stride < BLOCKSIZE*2)
+		if (index + stride < BLOCKSIZE * 2)
 			sharedSum[index + stride] += sharedSum[index];
 	}
 
 	__syncthreads();
 
 	// Copy results back to global memory
-	if (i+blockOffset < n)
-		d_Y[i+blockOffset] = sharedSum[i];
-	if(i + blockOffset + BLOCKSIZE < n) {
-		d_Y[i+blockOffset+BLOCKSIZE] = sharedSum[i+BLOCKSIZE];
+	if (i + blockOffset < n)
+		d_Y[i + blockOffset] = sharedSum[i];
+	if (i + blockOffset + BLOCKSIZE < n) {
+		d_Y[i + blockOffset + BLOCKSIZE] = sharedSum[i + BLOCKSIZE];
 	}
 
 	//Extract sum
@@ -83,24 +83,25 @@ __global__ void add_blocks(int *d_Sum1_Scanned, int *d_Y, int sumSize, int n) {
 	int blockOffset = blockIdx.x * BLOCKSIZE * 2;
 	int i = threadIdx.x;
 
-	if(blockIdx.x != 0) {
-		if(i+blockOffset < n)
+	if (blockIdx.x != 0) {
+		if (i + blockOffset < n)
 			d_Y[blockOffset + i] += d_Sum1_Scanned[blockIdx.x - 1];
-		if(blockOffset + BLOCKSIZE + i < n)
+		if (blockOffset + BLOCKSIZE + i < n)
 			d_Y[blockOffset + i + BLOCKSIZE] += d_Sum1_Scanned[blockIdx.x - 1];
 	}
 
 }
 
-__global__ void average_scanned_block(int *d_Y, int *d_Z, int n, int windowLen) {
+__global__ void average_scanned_block(int *d_Y, int *d_Z, int n,
+		int windowLen) {
 
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	if(i < n) {
+	if (i < n) {
 		int x = i - windowLen;
-		if(x >= 0) {
+		if (x >= 0) {
 			d_Z[i] = (d_Y[i] - d_Y[x]) / windowLen;
 		} else {
-			d_Z[i] = (d_Y[i] - d_Y[0]) / i;
+			d_Z[i] = d_Y[i] / (i + 1);
 		}
 	}
 }
@@ -125,7 +126,7 @@ void host_scan(const int *InputVector, int *OutputVector, int n) {
 
 	OutputVector[0] = InputVector[0];
 	for (int i = 1; i < n; ++i) {
-		OutputVector[i] = OutputVector[i-1] + InputVector[i];
+		OutputVector[i] = OutputVector[i - 1] + InputVector[i];
 	}
 }
 
@@ -161,17 +162,17 @@ __global__ void winAverageDeviceNaive(const int *InputVector, int *Window,
 }
 
 void printVector(int *vector, int len) {
-//	for (int i = 0; i < len; ++i) {
-//        if(i%100 == 0)
-//            printf("\n");
-//        if(i%2048 == 0) {
-//            printf("\n\n\n\n");
-//        } else if(i%1024 == 0) {
-//            printf("\n\n");
-//        }
-//		printf("%d, ", vector[i]);
-//	}
-//    printf("\n");
+	for (int i = 0; i < len; ++i) {
+		if (i % 100 == 0)
+			printf("\n");
+		if (i % 2048 == 0) {
+			printf("\n\n\n\n");
+		} else if (i % 1024 == 0) {
+			printf("\n\n");
+		}
+		printf("%d, ", vector[i]);
+	}
+	printf("\n");
 }
 
 /**
@@ -180,8 +181,8 @@ void printVector(int *vector, int len) {
 int main(void) {
 
 	// Print the vector length to be used, and compute its size
-	const int inputVectorLen = 1000000;  // This is 'size'
-	int windowLen = 30; // This is 'n'
+	const int inputVectorLen = 2000000;  // This is 'size'
+	int windowLen = 1000; // This is 'n'
 
 	printf("Input vector size %d\nWindow size = %d\n", inputVectorLen,
 			windowLen);
@@ -246,7 +247,7 @@ int main(void) {
 	cudaCheckError();
 
 	//Calculate size of extract sum vector
-	int sumLen = 1 + ((inputVectorLen-1) / (BLOCKSIZE*2));
+	int sumLen = 1 + ((inputVectorLen - 1) / (BLOCKSIZE * 2));
 	int sumSize = sumLen * sizeof(int);
 
 	cudaMalloc((void **) &d_Sum1, sumSize);
@@ -273,37 +274,20 @@ int main(void) {
 	sdkStartTimer(&timer);               // start the timer
 #endif
 	//Perform initial block scan
-	block_scan<<<blocksPerGrid, threadsPerBlock>>>(d_X, d_Y, inputVectorLen, d_Sum1);
-//    cudaDeviceSynchronize();
-//	cudaCheckError();
-//	cudaMemcpy(h_Y, d_Y, inputVectorSize, cudaMemcpyDeviceToHost);
-//	cudaCheckError();
-//	puts("\nd_Y after first block scan:");
-//	printVector(h_Y, inputVectorLen);
-//	cudaMemcpy(h_Sum1, d_Sum1, sumSize, cudaMemcpyDeviceToHost);
-//	cudaCheckError();
-//	puts("\nd_Sum1 after first extract sum:");
-//	printVector(h_Sum1, sumLen);
+	block_scan<<<blocksPerGrid, threadsPerBlock>>>(d_X, d_Y, inputVectorLen,
+			d_Sum1);
 
 	//Scan the extracted sum
-	block_scan<<<blocksPerGrid2, threadsPerBlock>>>(d_Sum1, d_Sum1_Scanned, sumLen, NULL);
-//    cudaDeviceSynchronize();
-//	cudaCheckError();
-//	cudaMemcpy(h_Sum1_Scanned, d_Sum1_Scanned, sumSize, cudaMemcpyDeviceToHost);
-//	cudaCheckError();
-//	puts("\n\nd_Sum1_scanned:");
-//	printVector(h_Sum1_Scanned, sumLen);
+	block_scan<<<blocksPerGrid2, threadsPerBlock>>>(d_Sum1, d_Sum1_Scanned,
+			sumLen, NULL);
 
 	//Add the scanned extract sum to the elements of the output vector
-	add_blocks<<<blocksPerGrid, threadsPerBlock>>>(d_Sum1_Scanned, d_Y, sumLen, inputVectorLen);
+	add_blocks<<<blocksPerGrid, threadsPerBlock>>>(d_Sum1_Scanned, d_Y, sumLen,
+			inputVectorLen);
 
-	average_scanned_block<<<blocksPerGrid, threadsPerBlock>>>(d_Y, d_Z, inputVectorLen, windowLen);
-    cudaDeviceSynchronize();
-	cudaCheckError();
-//	cudaMemcpy(h_Y, d_Y, inputVectorSize, cudaMemcpyDeviceToHost);
-//	cudaCheckError();
-//	puts("\n\nd_Y after adding d_sum1_scanned:");
-//	printVector(h_Y, inputVectorLen);
+	average_scanned_block<<<blocksPerGrid, threadsPerBlock>>>(d_Y, d_Z,
+			inputVectorLen, windowLen);
+	cudaDeviceSynchronize();
 
 #ifdef TIMING_SUPPORT
 	// stop and destroy timer
@@ -335,6 +319,9 @@ int main(void) {
 	cudaFree(d_Y);
 	cudaCheckError();
 
+	cudaFree(d_Z);
+	cudaCheckError();
+
 	cudaFree(d_Sum1);
 	cudaCheckError();
 
@@ -349,7 +336,6 @@ int main(void) {
 	free(h_input);
 	free(h_avg);
 	free(h_avgVerify);
-
 
 	printf("Done\n");
 	return 0;
